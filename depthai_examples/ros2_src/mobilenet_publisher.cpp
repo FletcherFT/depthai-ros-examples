@@ -49,18 +49,17 @@ int main(int argc, char** argv){
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("mobilenet_node");
     
-    std::string deviceName;
+    std::string tfPrefix;
     std::string cameraParamUri = "package://depthai_examples/params/camera";
     std::string nnPath(BLOB_PATH);
     bool syncNN;
     int bad_params = 0;
-
-    node->declare_parameter("camera_name", "oak");
+    
+    node->declare_parameter("tf_prefix", "oak");
     node->declare_parameter("camera_param_uri", cameraParamUri);
     node->declare_parameter("sync_nn", true);
-    node->declare_parameter("nn_path", "");
-
-    node->get_parameter("camera_name", deviceName);
+    node->declare_parameter<std::string>("nn_path", "");
+    node->get_parameter("tf_prefix", tfPrefix);
     node->get_parameter("camera_param_uri", cameraParamUri);
     node->get_parameter("sync_nn", syncNN);
 
@@ -81,7 +80,7 @@ int main(int argc, char** argv){
     std::string color_uri = cameraParamUri + "/" + "color.yaml";
 
     //TODO(sachin): Add option to use CameraInfo from EEPROM
-    dai::rosBridge::ImageConverter rgbConverter(deviceName + "_rgb_camera_optical_frame", false);
+    dai::rosBridge::ImageConverter rgbConverter(tfPrefix + "_rgb_camera_optical_frame", false);
     dai::rosBridge::BridgePublisher<sensor_msgs::msg::Image, dai::ImgFrame> rgbPublish(previewQueue,
                                                                                    node, 
                                                                                    std::string("color/image"),
@@ -95,19 +94,18 @@ int main(int argc, char** argv){
                                                                                    "color");
 
 
-    dai::rosBridge::ImgDetectionConverter detConverter(deviceName + "_rgb_camera_optical_frame", 300, 300, false);
+    dai::rosBridge::ImgDetectionConverter detConverter(tfPrefix + "_rgb_camera_optical_frame", 300, 300, false);
     dai::rosBridge::BridgePublisher<vision_msgs::msg::Detection2DArray, dai::ImgDetections> detectionPublish(nNetDataQueue,
                                                                                                          node, 
                                                                                                          std::string("color/mobilenet_detections"),
-                                                                                                         std::bind(static_cast<void(dai::rosBridge::ImgDetectionConverter::*)(std::shared_ptr<dai::ImgDetections>, 
-                                                                                                         vision_msgs::msg::Detection2DArray&)>(&dai::rosBridge::ImgDetectionConverter::toRosMsg), 
+                                                                                                         std::bind(&dai::rosBridge::ImgDetectionConverter::toRosMsg, 
                                                                                                          &detConverter,
                                                                                                          std::placeholders::_1, 
                                                                                                          std::placeholders::_2), 
                                                                                                          30);
 
-    detectionPublish.addPubisherCallback();
-    rgbPublish.addPubisherCallback(); // addPubisherCallback works only when the dataqueue is non blocking.
+    detectionPublish.addPublisherCallback();
+    rgbPublish.addPublisherCallback(); // addPublisherCallback works only when the dataqueue is non blocking.
 
     rclcpp::spin(node);
 

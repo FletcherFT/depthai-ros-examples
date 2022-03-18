@@ -14,7 +14,7 @@
 #include <depthai_bridge/BridgePublisher.hpp>
 #include <depthai_bridge/ImageConverter.hpp>
 
-dai::Pipeline createPipeline(bool lrcheck, bool extended, bool subpixel, int confidence, int LRchecktresh){
+dai::Pipeline createPipeline(bool lrcheck, bool extended, bool subpixel, int confidence, int LRchecktresh, std::string resolution){
 
     dai::Pipeline pipeline;
     auto monoLeft    = pipeline.create<dai::node::MonoCamera>();
@@ -25,10 +25,24 @@ dai::Pipeline createPipeline(bool lrcheck, bool extended, bool subpixel, int con
 
     xoutDepth->setStreamName("depth");
   
+    dai::node::MonoCamera::Properties::SensorResolution monoResolution; 
+    if(resolution == "720p"){
+        monoResolution = dai::node::MonoCamera::Properties::SensorResolution::THE_720_P; 
+    }else if(resolution == "400p" ){
+        monoResolution = dai::node::MonoCamera::Properties::SensorResolution::THE_400_P; 
+    }else if(resolution == "800p" ){
+        monoResolution = dai::node::MonoCamera::Properties::SensorResolution::THE_800_P; 
+    }else if(resolution == "480p" ){
+        monoResolution = dai::node::MonoCamera::Properties::SensorResolution::THE_480_P; 
+    }else{
+        ROS_ERROR("Invalid parameter. -> monoResolution: %s", resolution.c_str());
+        throw std::runtime_error("Invalid mono camera resolution.");
+    }
+
     // MonoCamera
-    monoLeft->setResolution(dai::MonoCameraProperties::SensorResolution::THE_480_P);
+    monoLeft->setResolution(monoResolution);
     monoLeft->setBoardSocket(dai::CameraBoardSocket::LEFT);
-    monoRight->setResolution(dai::MonoCameraProperties::SensorResolution::THE_480_P);
+    monoRight->setResolution(monoResolution);
     monoRight->setBoardSocket(dai::CameraBoardSocket::RIGHT);
 
     // StereoDepth
@@ -60,32 +74,38 @@ dai::Pipeline createPipeline(bool lrcheck, bool extended, bool subpixel, int con
     return pipeline;
 }
 
+template <typename T>
+static inline void getParamWithWarning(ros::NodeHandle& pnh, const char* key, T val) {
+    bool gotParam = pnh.getParam(key, val);
+    if(!gotParam) {
+        std::stringstream ss;
+        ss << val;
+        ROS_WARN("Could not find param '%s' on node '%s'. Defaulting to '%s'", key, pnh.getNamespace().c_str(), ss.str().c_str());
+    }
+}
 
 int main(int argc, char** argv){
 
     ros::init(argc, argv, "rgb_stereo_node");
     ros::NodeHandle pnh("~");
     
-    std::string deviceName;
+    std::string tfPrefix = "dai";
     std::string camera_param_uri;
-    int badParams = 0;
+    std::string monoResolution = "720p";
+
     bool lrcheck, extended, subpixel;
     int confidence = 200;
     int LRchecktresh = 5;
 
-    badParams += !pnh.getParam("camera_name", deviceName);
-    badParams += !pnh.getParam("camera_param_uri", camera_param_uri);
-    badParams += !pnh.getParam("lrcheck",  lrcheck);
-    badParams += !pnh.getParam("extended",  extended);
-    badParams += !pnh.getParam("subpixel",  subpixel);
-    badParams += !pnh.getParam("confidence",   confidence);
-    badParams += !pnh.getParam("LRchecktresh", LRchecktresh);
+    getParamWithWarning(pnh, "tf_prefix", tfPrefix);
+    getParamWithWarning(pnh, "camera_param_uri", camera_param_uri);
+    getParamWithWarning(pnh, "lrcheck",  lrcheck);
+    getParamWithWarning(pnh, "extended",  extended);
+    getParamWithWarning(pnh, "subpixel",  subpixel);
+    getParamWithWarning(pnh, "confidence",   confidence);
+    getParamWithWarning(pnh, "LRchecktresh", LRchecktresh);
 
-    if (badParams > 0)
-    {
-        throw std::runtime_error("Couldn't find one of the parameters");
-    }
-    dai::Pipeline pipeline = createPipeline(lrcheck, extended, subpixel, confidence, LRchecktresh);
+    dai::Pipeline pipeline = createPipeline(lrcheck, extended, subpixel, confidence, LRchecktresh, monoResolution);
     dai::Device device(pipeline);
     auto calibrationHandler = device.readCalibration();
 
@@ -97,11 +117,8 @@ int main(int argc, char** argv){
     std::string color_uri = camera_param_uri + "/" + "color.yaml";
 
 
-    dai::rosBridge::ImageConverter depthConverter(deviceName + "_right_camera_optical_frame", true);
-    // TODO: Resolution has been har coded here... naughty naughty.
-    // Instead load in the camera info using the camera_info_manager
-    auto depthCameraInfo = depthConverter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::RIGHT, 640, 480,
-    dai::Point2f(), dai::Point2f(), dai::CameraBoardSocket::RGB); 
+    dai::rosBridge::ImageConverter depthConverter(tfPrefix + "_right_camera_optical_frame", true);
+    auto rgbCameraInfo = depthConverter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::RGB, 1280, 720); 
 
     dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame> depthPublish(stereoQueue,
                                                                                      pnh, 
@@ -116,8 +133,7 @@ int main(int argc, char** argv){
                                                                                      "stereo");
 
 
-    dai::rosBridge::ImageConverter rgbConverter(deviceName + "_rgb_camera_optical_frame", true);
-    auto rgbCameraInfo = rgbConverter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::RGB, 1920, 1080);
+    dai::rosBridge::ImageConverter rgbConverter(tfPrefix + "_rgb_camera_optical_frame", true);
     dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame> rgbPublish(previewQueue,
                                                                                     pnh, 
                                                                                     std::string("color/image"),
@@ -130,8 +146,8 @@ int main(int argc, char** argv){
                                                                                     rgbCameraInfo,
                                                                                     "color");
 
-    depthPublish.addPubisherCallback(); // addPubisherCallback works only when the dataqueue is non blocking.
-    rgbPublish.addPubisherCallback();
+    depthPublish.addPublisherCallback(); // addPublisherCallback works only when the dataqueue is non blocking.
+    rgbPublish.addPublisherCallback();
 
     // We can add the rectified frames also similar to these publishers. 
     // Left them out so that users can play with it by adding and removing

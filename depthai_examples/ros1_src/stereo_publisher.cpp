@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <cstdio>
+#include <tuple>
 #include "sensor_msgs/Image.h"
 #include "stereo_msgs/DisparityImage.h"
 #include <camera_info_manager/camera_info_manager.h>
@@ -15,9 +16,9 @@
 #include <depthai_bridge/DisparityConverter.hpp>
 
 
-dai::Pipeline createPipeline(bool withDepth, bool lrcheck, bool extended, bool subpixel, int confidence, int LRchecktresh){
+std::tuple<dai::Pipeline, int, int> createPipeline(bool withDepth, bool lrcheck, bool extended, bool subpixel, int confidence, int LRchecktresh, std::string resolution){
     dai::Pipeline pipeline;
-
+    dai::node::MonoCamera::Properties::SensorResolution monoResolution; 
     auto monoLeft    = pipeline.create<dai::node::MonoCamera>();
     auto monoRight   = pipeline.create<dai::node::MonoCamera>();
     auto xoutLeft    = pipeline.create<dai::node::XLinkOut>();
@@ -36,15 +37,33 @@ dai::Pipeline createPipeline(bool withDepth, bool lrcheck, bool extended, bool s
         xoutDepth->setStreamName("disparity");
     }
 
-    // MonoCamera
-    monoLeft->setResolution(dai::MonoCameraProperties::SensorResolution::THE_720_P);
-    monoLeft->setBoardSocket(dai::CameraBoardSocket::LEFT);
-    monoRight->setResolution(dai::MonoCameraProperties::SensorResolution::THE_720_P);
-    monoRight->setBoardSocket(dai::CameraBoardSocket::RIGHT);
+    int width, height;
+    if(resolution == "720p"){
+        monoResolution = dai::node::MonoCamera::Properties::SensorResolution::THE_720_P; 
+        width  = 1280;
+        height = 720;
+    }else if(resolution == "400p" ){
+        monoResolution = dai::node::MonoCamera::Properties::SensorResolution::THE_400_P; 
+        width  = 640;
+        height = 400;
+    }else if(resolution == "800p" ){
+        monoResolution = dai::node::MonoCamera::Properties::SensorResolution::THE_800_P; 
+        width  = 1280;
+        height = 800;
+    }else if(resolution == "480p" ){
+        monoResolution = dai::node::MonoCamera::Properties::SensorResolution::THE_480_P; 
+        width  = 640;
+        height = 480;
+    }else{
+        ROS_ERROR("Invalid parameter. -> monoResolution: %s", resolution.c_str());
+        throw std::runtime_error("Invalid mono camera resolution.");
+    }
 
-    // int maxDisp = 96;
-    // if (extended) maxDisp *= 2;
-    // if (subpixel) maxDisp *= 32; // 5 bits fractional disparity
+    // MonoCamera
+    monoLeft->setResolution(monoResolution);
+    monoLeft->setBoardSocket(dai::CameraBoardSocket::LEFT);
+    monoRight->setResolution(monoResolution);
+    monoRight->setBoardSocket(dai::CameraBoardSocket::RIGHT);
 
     // StereoDepth
     stereo->initialConfig.setConfidenceThreshold(confidence);
@@ -68,7 +87,7 @@ dai::Pipeline createPipeline(bool withDepth, bool lrcheck, bool extended, bool s
         stereo->disparity.link(xoutDepth->input);
     }
 
-    return pipeline;
+    return std::make_tuple(pipeline, width, height);
 }
 
 int main(int argc, char** argv){
@@ -76,21 +95,25 @@ int main(int argc, char** argv){
     ros::init(argc, argv, "stereo_node");
     ros::NodeHandle pnh("~");
     
-    std::string deviceName, mode;
+    std::string tfPrefix, mode;
     std::string cameraParamUri;
     int badParams = 0;
     bool lrcheck, extended, subpixel, enableDepth;
     int confidence = 200;
+    int monoWidth, monoHeight;
     int LRchecktresh = 5;
+    std::string monoResolution = "720p";
+    dai::Pipeline pipeline;
 
     badParams += !pnh.getParam("camera_param_uri", cameraParamUri);
-    badParams += !pnh.getParam("camera_name",  deviceName);
-    badParams += !pnh.getParam("mode",         mode);
-    badParams += !pnh.getParam("lrcheck",      lrcheck);
-    badParams += !pnh.getParam("extended",     extended);
-    badParams += !pnh.getParam("subpixel",     subpixel);
-    badParams += !pnh.getParam("confidence",   confidence);
-    badParams += !pnh.getParam("LRchecktresh", LRchecktresh);
+    badParams += !pnh.getParam("tf_prefix",        tfPrefix);
+    badParams += !pnh.getParam("mode",             mode);
+    badParams += !pnh.getParam("lrcheck",          lrcheck);
+    badParams += !pnh.getParam("extended",         extended);
+    badParams += !pnh.getParam("subpixel",         subpixel);
+    badParams += !pnh.getParam("confidence",       confidence);
+    badParams += !pnh.getParam("LRchecktresh",     LRchecktresh);
+    badParams += !pnh.getParam("monoResolution",   monoResolution);
 
     if (badParams > 0)
     {   
@@ -105,9 +128,9 @@ int main(int argc, char** argv){
         enableDepth = false;
     }
 
-    dai::Pipeline pipeline = createPipeline(enableDepth, lrcheck, extended, subpixel, confidence, LRchecktresh);
-    dai::Device device(pipeline);
+    std::tie(pipeline, monoWidth, monoHeight) = createPipeline(enableDepth, lrcheck, extended, subpixel, confidence, LRchecktresh, monoResolution);
 
+    dai::Device device(pipeline);
     auto leftQueue = device.getOutputQueue("left", 30, false);
     auto rightQueue = device.getOutputQueue("right", 30, false);
     std::shared_ptr<dai::DataOutputQueue> stereoQueue;
@@ -118,9 +141,15 @@ int main(int argc, char** argv){
     }
 
     auto calibrationHandler = device.readCalibration();
+
+    auto boardName = calibrationHandler.getEepromData().boardName;
+    if (monoHeight > 480 && boardName == "OAK-D-LITE") {
+        monoWidth = 640;
+        monoHeight = 480;
+    }
    
-    dai::rosBridge::ImageConverter converter(deviceName + "_left_camera_optical_frame", true);
-    auto leftCameraInfo = converter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::LEFT, 640, 480); 
+    dai::rosBridge::ImageConverter converter(tfPrefix + "_left_camera_optical_frame", true);
+    auto leftCameraInfo = converter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::LEFT, monoWidth, monoHeight); 
     dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame> leftPublish(leftQueue,
                                                                                     pnh, 
                                                                                     std::string("left/image"),
@@ -132,10 +161,10 @@ int main(int argc, char** argv){
                                                                                     leftCameraInfo,
                                                                                     "left");
 
-    leftPublish.addPubisherCallback();
+    leftPublish.addPublisherCallback();
 
-    dai::rosBridge::ImageConverter rightconverter(deviceName + "_right_camera_optical_frame", true);
-    auto rightCameraInfo = converter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::RIGHT, 640, 480); 
+    dai::rosBridge::ImageConverter rightconverter(tfPrefix + "_right_camera_optical_frame", true);
+    auto rightCameraInfo = converter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::RIGHT, monoWidth, monoHeight);
 
     dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame> rightPublish(rightQueue,
                                                                                      pnh, 
@@ -148,7 +177,7 @@ int main(int argc, char** argv){
                                                                                      rightCameraInfo,
                                                                                      "right");
 
-    rightPublish.addPubisherCallback();
+    rightPublish.addPublisherCallback();
 
      if(mode == "depth"){
         dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame> depthPublish(stereoQueue,
@@ -162,11 +191,11 @@ int main(int argc, char** argv){
                                                                                      30,
                                                                                      rightCameraInfo,
                                                                                      "stereo");
-        depthPublish.addPubisherCallback();
+        depthPublish.addPublisherCallback();
         ros::spin();
     }
     else{
-        dai::rosBridge::DisparityConverter dispConverter(deviceName + "_right_camera_optical_frame", 880, 7.5, 20, 2000);
+        dai::rosBridge::DisparityConverter dispConverter(tfPrefix + "_right_camera_optical_frame", 880, 7.5, 20, 2000);
         dai::rosBridge::BridgePublisher<stereo_msgs::DisparityImage, dai::ImgFrame> dispPublish(stereoQueue,
                                                                                      pnh, 
                                                                                      std::string("stereo/disparity"),
@@ -177,7 +206,7 @@ int main(int argc, char** argv){
                                                                                      30,
                                                                                      rightCameraInfo,
                                                                                      "stereo");
-        dispPublish.addPubisherCallback();
+        dispPublish.addPublisherCallback();
         ros::spin();
     }
     return 0;

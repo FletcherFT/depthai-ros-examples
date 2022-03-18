@@ -1,6 +1,7 @@
 
 #include "ros/ros.h"
 
+#include <depthai/pipeline/node/MonoCamera.hpp>
 #include <iostream>
 #include <cstdio>
 // #include "utility.hpp"
@@ -28,9 +29,12 @@ const std::vector<std::string> label_map = {"person",         "bicycle",    "car
              "laptop",         "mouse",      "remote",        "keyboard",      "cell phone",  "microwave",     "oven",
              "toaster",        "sink",       "refrigerator",  "book",          "clock",       "vase",          "scissors",
              "teddy bear",     "hair drier", "toothbrush"};
+std::unique_ptr<dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame>> rgbPublish, depthPublish;
+std::unique_ptr<dai::Device> _dev;
 
-dai::Pipeline createPipeline(bool syncNN, bool subpixel, std::string nnPath, int confidence, int LRchecktresh){
+dai::Pipeline createPipeline(bool syncNN, bool subpixel, std::string nnPath, int confidence, int LRchecktresh, std::string resolution){
     dai::Pipeline pipeline;
+    dai::node::MonoCamera::Properties::SensorResolution monoResolution; 
     auto colorCam = pipeline.create<dai::node::ColorCamera>();
     auto spatialDetectionNetwork = pipeline.create<dai::node::YoloSpatialDetectionNetwork>();
     auto monoLeft =  pipeline.create<dai::node::MonoCamera>();
@@ -51,9 +55,22 @@ dai::Pipeline createPipeline(bool syncNN, bool subpixel, std::string nnPath, int
     colorCam->setInterleaved(false);
     colorCam->setColorOrder(dai::ColorCameraProperties::ColorOrder::BGR);
 
-    monoLeft->setResolution(dai::MonoCameraProperties::SensorResolution::THE_400_P);
+    if(resolution == "720p"){
+        monoResolution = dai::node::MonoCamera::Properties::SensorResolution::THE_720_P; 
+    }else if(resolution == "400p" ){
+        monoResolution = dai::node::MonoCamera::Properties::SensorResolution::THE_400_P; 
+    }else if(resolution == "800p" ){
+        monoResolution = dai::node::MonoCamera::Properties::SensorResolution::THE_800_P; 
+    }else if(resolution == "480p" ){
+        monoResolution = dai::node::MonoCamera::Properties::SensorResolution::THE_480_P; 
+    }else{
+        ROS_ERROR("Invalid parameter. -> monoResolution: %s", resolution.c_str());
+        throw std::runtime_error("Invalid mono camera resolution.");
+    }
+
+    monoLeft->setResolution(monoResolution);
     monoLeft->setBoardSocket(dai::CameraBoardSocket::LEFT);
-    monoRight->setResolution(dai::MonoCameraProperties::SensorResolution::THE_400_P);
+    monoRight->setResolution(monoResolution);
     monoRight->setBoardSocket(dai::CameraBoardSocket::RIGHT);
 
     /// setting node configs
@@ -99,7 +116,7 @@ int main(int argc, char** argv){
     ros::init(argc, argv, "yolov4_spatial_node");
     ros::NodeHandle pnh("~");
     
-    std::string deviceName;
+    std::string tfPrefix;
     std::string camera_param_uri;
     std::string nnPath(BLOB_PATH); // Set your path for the model here
     bool syncNN, subpixel;
@@ -107,13 +124,15 @@ int main(int argc, char** argv){
     int badParams = 0;
     int confidence = 200;
     int LRchecktresh = 5;
+    std::string monoResolution = "720p";
 
-    badParams += !pnh.getParam("camera_name", deviceName);
+    badParams += !pnh.getParam("tf_prefix", tfPrefix);
     badParams += !pnh.getParam("camera_param_uri", camera_param_uri);
     badParams += !pnh.getParam("sync_nn", syncNN);
     badParams += !pnh.getParam("subpixel", subpixel);
     badParams += !pnh.getParam("confidence", confidence);
     badParams += !pnh.getParam("LRchecktresh", LRchecktresh);
+    badParams += !pnh.getParam("monoResolution", monoResolution);
 
     if (badParams > 0)
     {
@@ -125,14 +144,39 @@ int main(int argc, char** argv){
       pnh.getParam("nn_path", nnPath);
     }
 
-    dai::Pipeline pipeline = createPipeline(syncNN, subpixel, nnPath, confidence, LRchecktresh);
-    dai::Device device(pipeline);
+    dai::Pipeline pipeline = createPipeline(syncNN, subpixel, nnPath, confidence, LRchecktresh, monoResolution);
+    _dev = std::make_unique<dai::Device>(pipeline);
+    auto colorQueue = _dev->getOutputQueue("preview", 30, false);
+    auto detectionQueue = _dev->getOutputQueue("detections", 30, false);
+    auto depthQueue = _dev->getOutputQueue("depth", 30, false);
+    auto calibrationHandler = _dev->readCalibration();
+    int width, height;
+    if(monoResolution == "720p"){
+        width  = 1280;
+        height = 720;
+    }else if(monoResolution == "400p" ){
+        width  = 640;
+        height = 400;
+    }else if(monoResolution == "800p" ){
+        width  = 1280;
+        height = 800; 
+    }else if(monoResolution == "480p" ){
+        width  = 640;
+        height = 480; 
+    }else{
+        ROS_ERROR("Invalid parameter. -> monoResolution: %s", monoResolution.c_str());
+        throw std::runtime_error("Invalid mono camera resolution.");
+    }
 
-    std::string color_uri = camera_param_uri + "/" + "color.yaml";
-     std::string stereo_uri = camera_param_uri + "/" + "right.yaml";
+    auto boardName = calibrationHandler.getEepromData().boardName;
+    if (height > 480 && boardName == "OAK-D-LITE") {
+        width = 640;
+        height = 480;
+    }
 
-    dai::rosBridge::ImageConverter rgbConverter(deviceName + "_rgb_camera_optical_frame", false);
-    dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame> rgbPublish(device.getOutputQueue("preview", 30, false),
+    dai::rosBridge::ImageConverter rgbConverter(tfPrefix + "_rgb_camera_optical_frame", false);
+    auto rgbCameraInfo = rgbConverter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::RGB, 416, 416);
+    rgbPublish = std::make_unique<dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame>>(colorQueue, 
                                                                                      pnh, 
                                                                                      std::string("color/image"),
                                                                                      std::bind(&dai::rosBridge::ImageConverter::toRosMsg, 
@@ -141,36 +185,36 @@ int main(int argc, char** argv){
                                                                                      std::placeholders::_1, 
                                                                                      std::placeholders::_2) , 
                                                                                      30,
-                                                                                     color_uri,
+                                                                                     rgbCameraInfo,
                                                                                      "color");
 
-    dai::rosBridge::SpatialDetectionConverter detConverter(deviceName + "_rgb_camera_optical_frame", 416, 416, false);
-    dai::rosBridge::BridgePublisher<depthai_ros_msgs::SpatialDetectionArray, dai::SpatialImgDetections> detectionPublish(device.getOutputQueue("detections", 30, false),
+    dai::rosBridge::SpatialDetectionConverter detConverter(tfPrefix + "_rgb_camera_optical_frame", 416, 416, false);
+    dai::rosBridge::BridgePublisher<depthai_ros_msgs::SpatialDetectionArray, dai::SpatialImgDetections> detectionPublish(detectionQueue,
                                                                                                          pnh, 
                                                                                                          std::string("color/yolov4_Spatial_detections"),
-                                                                                                         std::bind(static_cast<void(dai::rosBridge::SpatialDetectionConverter::*)(std::shared_ptr<dai::SpatialImgDetections>, 
-                                                                                                         depthai_ros_msgs::SpatialDetectionArray&)>(&dai::rosBridge::SpatialDetectionConverter::toRosMsg), 
+                                                                                                         std::bind(&dai::rosBridge::SpatialDetectionConverter::toRosMsg, 
                                                                                                          &detConverter,
                                                                                                          std::placeholders::_1, 
                                                                                                          std::placeholders::_2) , 
                                                                                                          30);
 
-    dai::rosBridge::ImageConverter depthConverter(deviceName + "_right_camera_optical_frame", true);
-    dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame> depthPublish(device.getOutputQueue("depth", 30, false),
-                                                                                     pnh, 
+    dai::rosBridge::ImageConverter depthConverter(tfPrefix + "_right_camera_optical_frame", true);
+    auto rightCameraInfo = depthConverter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::RIGHT, width, height); 
+    depthPublish = std::make_unique<dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame>>(depthQueue, 
+                                                                                     pnh,
                                                                                      std::string("stereo/depth"),
                                                                                      std::bind(&dai::rosBridge::ImageConverter::toRosMsg, 
                                                                                      &depthConverter, 
                                                                                      std::placeholders::_1, 
                                                                                      std::placeholders::_2) , 
                                                                                      30,
-                                                                                     stereo_uri,
+                                                                                     rightCameraInfo,
                                                                                      "stereo");
 
-    depthPublish.addPubisherCallback();
+    depthPublish->addPublisherCallback();
 
-    detectionPublish.addPubisherCallback(); 
-    rgbPublish.addPubisherCallback(); // addPubisherCallback works only when the dataqueue is non blocking.
+    detectionPublish.addPublisherCallback(); 
+    rgbPublish->addPublisherCallback(); // addPublisherCallback works only when the dataqueue is non blocking.
 
     ros::spin();
 

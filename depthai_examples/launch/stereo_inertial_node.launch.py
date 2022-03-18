@@ -16,7 +16,7 @@ def generate_launch_description():
     
 
     camera_model = LaunchConfiguration('camera_model',  default = 'OAK-D')
-    camera_name  = LaunchConfiguration('camera_name',   default = 'oak')
+    tf_prefix    = LaunchConfiguration('tf_prefix',   default = 'oak')
     base_frame   = LaunchConfiguration('base_frame',    default = 'oak-d_frame')
     parent_frame = LaunchConfiguration('parent_frame',  default = 'oak-d-base-frame')
     
@@ -27,6 +27,7 @@ def generate_launch_description():
     cam_pitch    = LaunchConfiguration('cam_pitch',     default = '0.0')
     cam_yaw      = LaunchConfiguration('cam_yaw',       default = '0.0')
 
+    imuMode      = LaunchConfiguration('imuMode', default = '1')
     mode         = LaunchConfiguration('mode', default = 'depth')
     lrcheck      = LaunchConfiguration('lrcheck', default = True)
     extended     = LaunchConfiguration('extended', default = False)
@@ -37,15 +38,17 @@ def generate_launch_description():
     stereo_fps     = LaunchConfiguration('stereo_fps', default = 30)
     confidence     = LaunchConfiguration('confidence', default = 200)
     LRchecktresh   = LaunchConfiguration('LRchecktresh', default = 5)
+    angularVelCovariance  = LaunchConfiguration('linearAccelCovariance', default = 0.0)
+    linearAccelCovariance = LaunchConfiguration('linearAccelCovariance', default = 0.0)
 
     declare_camera_model_cmd = DeclareLaunchArgument(
         'camera_model',
         default_value=camera_model,
         description='The model of the camera. Using a wrong camera model can disable camera features. Valid models: `OAK-D, OAK-D-LITE`.')
 
-    declare_camera_name_cmd = DeclareLaunchArgument(
-        'camera_name',
-        default_value=camera_name,
+    declare_tf_prefix_cmd = DeclareLaunchArgument(
+        'tf_prefix',
+        default_value=tf_prefix,
         description='The name of the camera. It can be different from the camera model and it will be used in naming TF.')
 
     declare_base_frame_cmd = DeclareLaunchArgument(
@@ -93,6 +96,11 @@ def generate_launch_description():
         default_value=mode,
         description='set to depth or disparity. Setting to depth will publish depth or else will publish disparity.')
 
+    declare_imu_mode_cmd = DeclareLaunchArgument(
+        'imuMode',
+        default_value=imuMode,
+        description=' set to 0 -> COPY, 1 -> LINEAR_INTERPOLATE_GYRO, 2 -> LINEAR_INTERPOLATE_ACCEL')
+
     declare_lrcheck_cmd = DeclareLaunchArgument(
         'lrcheck',
         default_value=lrcheck,
@@ -132,12 +140,22 @@ def generate_launch_description():
         'confidence',
         default_value=confidence,
         description='The name of the camera. It can be different from the camera model and it will be used as node `namespace`.')
-    
+
+    declare_angularVelCovariance_cmd = DeclareLaunchArgument(
+        'angularVelCovariance',
+        default_value=angularVelCovariance,
+        description='Set the angular velocity covariance of the IMU.')
+
+    declare_linearAccelCovariance_cmd = DeclareLaunchArgument(
+        'linearAccelCovariance',
+        default_value=linearAccelCovariance,
+        description='Set the Linear acceleration covariance of the IMU.')
+   
     
     urdf_launch = IncludeLaunchDescription(
                             launch_description_sources.PythonLaunchDescriptionSource(
                                     os.path.join(urdf_launch_dir, 'urdf_launch.py')),
-                            launch_arguments={'camera_name' : camera_name,
+                            launch_arguments={'tf_prefix'   : tf_prefix,
                                               'camera_model': camera_model,
                                               'base_frame'  : base_frame,
                                               'parent_frame': parent_frame,
@@ -152,8 +170,9 @@ def generate_launch_description():
     streo_node = launch_ros.actions.Node(
             package='depthai_examples', executable='stereo_inertial_node',
             output='screen',
-            parameters=[{'camera_name':   camera_name},
+            parameters=[{'tf_prefix':     tf_prefix},
                         {'mode':          mode},
+                        {'imuMode':       imuMode},
                         {'lrcheck':       lrcheck},
                         {'extended':      extended},
                         {'subpixel':      subpixel},
@@ -181,8 +200,9 @@ def generate_launch_description():
             ],
             output='screen',)
 
+    #TODO(sachin): Move this into the same container
     point_cloud_node = launch_ros.actions.ComposableNodeContainer(
-            name='container',
+            name='container2',
             namespace='',
             package='rclcpp_components',
             executable='component_container',
@@ -206,7 +226,7 @@ def generate_launch_description():
             arguments=['--display-config', default_rviz])
 
     ld = LaunchDescription()
-    ld.add_action(declare_camera_name_cmd)
+    ld.add_action(declare_tf_prefix_cmd)
     ld.add_action(declare_camera_model_cmd)
     
     ld.add_action(declare_base_frame_cmd)
@@ -220,6 +240,7 @@ def generate_launch_description():
     ld.add_action(declare_yaw_cmd)
     
     ld.add_action(declare_mode_cmd)
+    ld.add_action(declare_imu_mode_cmd)
     ld.add_action(declare_lrcheck_cmd)
     ld.add_action(declare_extended_cmd)
     ld.add_action(declare_subpixel_cmd)
@@ -228,6 +249,8 @@ def generate_launch_description():
     ld.add_action(declare_stereo_fps_cmd)
     ld.add_action(declare_LRchecktresh_cmd)
     ld.add_action(declare_confidence_cmd)
+    ld.add_action(declare_angularVelCovariance_cmd)
+    ld.add_action(declare_linearAccelCovariance_cmd)
 
     ld.add_action(streo_node)
     ld.add_action(urdf_launch)
