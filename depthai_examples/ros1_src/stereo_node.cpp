@@ -142,7 +142,7 @@ int main(int argc, char** argv){
                                                                                     leftCameraInfo,
                                                                                     "left");
 
-    leftPublish.addPubisherCallback();
+    leftPublish.addPublisherCallback();
 
     dai::rosBridge::ImageConverter rightconverter(deviceName + "_right_camera_optical_frame", true);
     auto rightCameraInfo = rightconverter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::RIGHT, 640, 480,
@@ -158,7 +158,7 @@ int main(int argc, char** argv){
                                                                                      rightCameraInfo,
                                                                                      "right");
 
-    rightPublish.addPubisherCallback();
+    rightPublish.addPublisherCallback();
 
     dai::rosBridge::ImageConverter rgbconverter(deviceName + "_rgb_camera_optical_frame", true);
     auto rgbCameraInfo = rgbconverter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::RGB, 1920, 1080,
@@ -174,7 +174,7 @@ int main(int argc, char** argv){
                                                                                     rgbCameraInfo,
                                                                                     "rgb");
 
-    rgbPublish.addPubisherCallback();
+    rgbPublish.addPublisherCallback();
 
     // dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame> leftRectPublish(leftRectQueue,
     //                                                                                     pnh, 
@@ -187,7 +187,7 @@ int main(int argc, char** argv){
     //                                                                                     leftCameraInfo,
     //                                                                                     "left");
 
-    // leftRectPublish.addPubisherCallback();
+    // leftRectPublish.addPublisherCallback();
 
     // dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame> rightRectPublish(rightRectQueue,
     //                                                                                     pnh, 
@@ -200,7 +200,7 @@ int main(int argc, char** argv){
     //                                                                                     rightCameraInfo,
     //                                                                                     "right");
 
-    // rightRectPublish.addPubisherCallback();
+    // rightRectPublish.addPublisherCallback();
 
     dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame> depthPublish(depthQueue,
                                                                                      pnh, 
@@ -213,7 +213,7 @@ int main(int argc, char** argv){
                                                                                      30,
                                                                                      rightCameraInfo,
                                                                                      "depth");
-    depthPublish.addPubisherCallback();
+    depthPublish.addPublisherCallback();
 
     dai::rosBridge::DisparityConverter dispConverter(deviceName + "_right_camera_optical_frame", 880, 7.5, 20, 2000);
     dai::rosBridge::BridgePublisher<stereo_msgs::DisparityImage, dai::ImgFrame> dispPublish(disparityQueue,
@@ -226,7 +226,7 @@ int main(int argc, char** argv){
                                                                                     30,
                                                                                     rightCameraInfo,
                                                                                     "disparity");
-    dispPublish.addPubisherCallback();
+    dispPublish.addPublisherCallback();
 
     ros::spin();
     return 0;
