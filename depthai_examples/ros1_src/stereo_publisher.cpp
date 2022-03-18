@@ -120,7 +120,7 @@ int main(int argc, char** argv){
     auto calibrationHandler = device.readCalibration();
    
     dai::rosBridge::ImageConverter converter(deviceName + "_left_camera_optical_frame", true);
-    auto leftCameraInfo = converter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::LEFT, 1280, 720); 
+    auto leftCameraInfo = converter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::LEFT, 640, 480); 
     dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame> leftPublish(leftQueue,
                                                                                     pnh, 
                                                                                     std::string("left/image"),
@@ -135,7 +135,7 @@ int main(int argc, char** argv){
     leftPublish.addPubisherCallback();
 
     dai::rosBridge::ImageConverter rightconverter(deviceName + "_right_camera_optical_frame", true);
-    auto rightCameraInfo = converter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::RIGHT, 1280, 720); 
+    auto rightCameraInfo = converter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::RIGHT, 640, 480); 
 
     dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame> rightPublish(rightQueue,
                                                                                      pnh, 

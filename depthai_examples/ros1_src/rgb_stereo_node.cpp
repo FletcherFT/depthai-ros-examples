@@ -26,9 +26,9 @@ dai::Pipeline createPipeline(bool lrcheck, bool extended, bool subpixel, int con
     xoutDepth->setStreamName("depth");
   
     // MonoCamera
-    monoLeft->setResolution(dai::MonoCameraProperties::SensorResolution::THE_720_P);
+    monoLeft->setResolution(dai::MonoCameraProperties::SensorResolution::THE_480_P);
     monoLeft->setBoardSocket(dai::CameraBoardSocket::LEFT);
-    monoRight->setResolution(dai::MonoCameraProperties::SensorResolution::THE_720_P);
+    monoRight->setResolution(dai::MonoCameraProperties::SensorResolution::THE_480_P);
     monoRight->setBoardSocket(dai::CameraBoardSocket::RIGHT);
 
     // StereoDepth
@@ -98,7 +98,10 @@ int main(int argc, char** argv){
 
 
     dai::rosBridge::ImageConverter depthConverter(deviceName + "_right_camera_optical_frame", true);
-    auto rgbCameraInfo = depthConverter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::RGB, 1280, 720); 
+    // TODO: Resolution has been har coded here... naughty naughty.
+    // Instead load in the camera info using the camera_info_manager
+    auto depthCameraInfo = depthConverter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::RIGHT, 640, 480,
+    dai::Point2f(), dai::Point2f(), dai::CameraBoardSocket::RGB); 
 
     dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame> depthPublish(stereoQueue,
                                                                                      pnh, 
@@ -109,11 +112,12 @@ int main(int argc, char** argv){
                                                                                      std::placeholders::_1, 
                                                                                      std::placeholders::_2) , 
                                                                                      30,
-                                                                                     rgbCameraInfo,
+                                                                                     depthCameraInfo,
                                                                                      "stereo");
 
 
     dai::rosBridge::ImageConverter rgbConverter(deviceName + "_rgb_camera_optical_frame", true);
+    auto rgbCameraInfo = rgbConverter.calibrationToCameraInfo(calibrationHandler, dai::CameraBoardSocket::RGB, 1920, 1080);
     dai::rosBridge::BridgePublisher<sensor_msgs::Image, dai::ImgFrame> rgbPublish(previewQueue,
                                                                                     pnh, 
                                                                                     std::string("color/image"),
